@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>シャープ比ポートフォリオリスク・リターン分析</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 min-h-screen">
+  <div class="max-w-5xl mx-auto px-4 py-8">
+    <h1 class="text-2xl font-bold text-gray-800 mb-2">シャープ比ポートフォリオ リスク・リターン分析</h1>
+    <p class="text-gray-500 text-sm mb-6">複数資産の期待リターン・標準偏差・配分から、ポートフォリオのシャープ比を計算します。</p>
+
+    <!-- 無リスク金利 -->
+    <div class="bg-white rounded-xl shadow p-5 mb-5">
+      <div class="flex items-center gap-4 flex-wrap">
+        <div>
+          <label class="block text-sm font-medium text-gray-600 mb-1" for="rfRate">無リスク金利（%）</label>
+          <input id="rfRate" type="number" min="0" max="20" step="0.01" value="0.1" aria-label="無リスク金利%"
+            class="w-32 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+        </div>
+        <div class="text-sm text-gray-500 mt-4">シャープ比 = (ポートフォリオリターン - 無リスク金利) / ポートフォリオリスク</div>
+      </div>
+    </div>
+
+    <!-- 資産入力 -->
+    <div class="bg-white rounded-xl shadow p-5 mb-5">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-base font-semibold text-gray-700">資産リスト（最大5件）</h2>
+        <button id="addAssetBtn" aria-label="資産を追加"
+          class="text-sm bg-indigo-100 hover:bg-indigo-200 text-indigo-700 font-semibold px-4 py-1.5 rounded-lg transition">
+          + 資産を追加
+        </button>
+      </div>
+      <div id="assetList" class="space-y-3"></div>
+      <div class="mt-3 text-xs text-gray-400">※配分の合計が100%になるよう調整してください。相関係数は簡略化のため無視します。</div>
+    </div>
+
+    <button id="calcBtn" aria-label="シャープ比を計算"
+      class="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-8 py-2 rounded-lg transition mb-6">
+      シャープ比を計算
+    </button>
+
+    <!-- 結果 -->
+    <div id="resultArea" class="hidden">
+      <div class="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-6">
+        <div class="bg-indigo-50 rounded-xl p-4 text-center">
+          <div class="text-xs text-gray-500 mb-1">ポートフォリオリターン</div>
+          <div id="pfReturn" class="text-2xl font-bold text-indigo-700">-</div>
+          <div class="text-xs text-gray-400">%</div>
+        </div>
+        <div class="bg-red-50 rounded-xl p-4 text-center">
+          <div class="text-xs text-gray-500 mb-1">ポートフォリオリスク</div>
+          <div id="pfRisk" class="text-2xl font-bold text-red-600">-</div>
+          <div class="text-xs text-gray-400">%</div>
+        </div>
+        <div class="bg-yellow-50 rounded-xl p-4 text-center">
+          <div class="text-xs text-gray-500 mb-1">シャープ比</div>
+          <div id="sharpRatio" class="text-2xl font-bold text-yellow-700">-</div>
+          <div class="text-xs text-gray-400">（1.0以上が良好）</div>
+        </div>
+        <div class="bg-green-50 rounded-xl p-4 text-center">
+          <div class="text-xs text-gray-500 mb-1">配分合計</div>
+          <div id="totalAlloc" class="text-2xl font-bold text-green-600">-</div>
+          <div class="text-xs text-gray-400">%</div>
+        </div>
+      </div>
+
+      <!-- シャープ比評価 -->
+      <div id="sharpeComment" class="bg-white rounded-xl shadow p-4 mb-5 text-sm text-gray-700"></div>
+
+      <!-- スライダー -->
+      <div class="bg-white rounded-xl shadow p-5 mb-5">
+        <h2 class="text-base font-semibold text-gray-700 mb-3">配分スライダー（動的シャープ比確認）</h2>
+        <div id="sliders" class="space-y-3"></div>
+        <div class="mt-3 p-3 bg-indigo-50 rounded-lg text-sm">
+          シャープ比（現在）: <span id="slideSharpe" class="font-bold text-indigo-700">-</span>
+          リターン: <span id="slideReturn" class="font-bold">-</span>%
+          リスク: <span id="slideRisk" class="font-bold">-</span>%
+        </div>
+      </div>
+
+      <!-- リスク・リターン散布図 -->
+      <div class="bg-white rounded-xl shadow p-5 mb-5">
+        <h2 class="text-base font-semibold text-gray-700 mb-3">リスク・リターン散布図</h2>
+        <div class="overflow-x-auto">
+          <svg id="chart" viewBox="0 0 500 360" class="w-full max-w-lg mx-auto block" aria-label="リスク・リターン散布図" role="img"></svg>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+    const DEFAULT_ASSETS = [
+      { name: '日本株', ret: 7, risk: 18, alloc: 30 },
+      { name: '米国株', ret: 10, risk: 20, alloc: 30 },
+      { name: '債券', ret: 2, risk: 5, alloc: 25 },
+      { name: 'REIT', ret: 5, risk: 15, alloc: 15 },
+    ];
+
+    let assets = DEFAULT_ASSETS.map(a => ({...a}));
+
+    function renderAssets() {
+      const container = document.getElementById('assetList');
+      container.innerHTML = assets.map((a, i) =>
+        `<div class="grid grid-cols-5 gap-2 items-center text-sm asset-row" data-idx="${i}">
+          <input type="text" value="${escHtml(a.name)}" placeholder="資産名" aria-label="資産名${i+1}"
+            class="asset-name border border-gray-300 rounded-lg px-2 py-1.5 col-span-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+          <div class="flex items-center gap-1">
+            <input type="number" value="${a.ret}" min="-20" max="100" step="0.1" aria-label="期待リターン${i+1}%"
+              class="asset-ret w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+            <span class="text-gray-400 text-xs whitespace-nowrap">R%</span>
+          </div>
+          <div class="flex items-center gap-1">
+            <input type="number" value="${a.risk}" min="0" max="100" step="0.1" aria-label="標準偏差${i+1}%"
+              class="asset-risk w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+            <span class="text-gray-400 text-xs whitespace-nowrap">σ%</span>
+          </div>
+          <div class="flex items-center gap-1">
+            <input type="number" value="${a.alloc}" min="0" max="100" step="1" aria-label="配分${i+1}%"
+              class="asset-alloc w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+            <span class="text-gray-400 text-xs whitespace-nowrap">配分%</span>
+          </div>
+          <button class="remove-btn text-xs text-red-400 hover:text-red-600 font-semibold" aria-label="資産${i+1}を削除" data-idx="${i}">削除</button>
+        </div>`
+      ).join('');
+
+      container.querySelectorAll('.remove-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          if (assets.length <= 1) return;
+          assets.splice(parseInt(btn.dataset.idx), 1);
+          renderAssets();
+        });
+      });
+    }
+
+    function readAssets() {
+      const rows = document.querySelectorAll('.asset-row');
+      return Array.from(rows).map((row, i) => ({
+        name: row.querySelector('.asset-name').value.trim() || `資産${i+1}`,
+        ret: parseFloat(row.querySelector('.asset-ret').value) || 0,
+        risk: parseFloat(row.querySelector('.asset-risk').value) || 0,
+        alloc: parseFloat(row.querySelector('.asset-alloc').value) || 0,
+      }));
+    }
+
+    function calcPortfolio(assets, rfRate) {
+      const totalAlloc = assets.reduce((s, a) => s + a.alloc, 0);
+      const weights = assets.map(a => a.alloc / (totalAlloc || 1) / 100);
+      const pfReturn = assets.reduce((s, a, i) => s + weights[i] * a.ret, 0);
+      // 分散 = sum(w_i^2 * sigma_i^2) (相関ゼロ簡略)
+      const pfVar = assets.reduce((s, a, i) => s + weights[i] ** 2 * (a.risk / 100) ** 2, 0);
+      const pfRisk = Math.sqrt(pfVar) * 100;
+      const sharpe = pfRisk > 0 ? (pfReturn - rfRate) / pfRisk : 0;
+      return { pfReturn, pfRisk, sharpe, totalAlloc };
+    }
+
+    function calc() {
+      assets = readAssets();
+      const rfRate = parseFloat(document.getElementById('rfRate').value) || 0;
+      const { pfReturn, pfRisk, sharpe, totalAlloc } = calcPortfolio(assets, rfRate);
+
+      document.getElementById('pfReturn').textContent = pfReturn.toFixed(2);
+      document.getElementById('pfRisk').textContent = pfRisk.toFixed(2);
+      document.getElementById('sharpRatio').textContent = sharpe.toFixed(3);
+      document.getElementById('totalAlloc').textContent = totalAlloc.toFixed(0);
+
+      let comment = '';
+      if (sharpe >= 2) comment = `シャープ比 <strong>${sharpe.toFixed(3)}</strong>：非常に優秀なポートフォリオです。`;
+      else if (sharpe >= 1) comment = `シャープ比 <strong>${sharpe.toFixed(3)}</strong>：良好なポートフォリオです。リスク1単位当たりの超過リターンが高い。`;
+      else if (sharpe >= 0.5) comment = `シャープ比 <strong>${sharpe.toFixed(3)}</strong>：平均的なポートフォリオです。配分の見直しで改善余地あり。`;
+      else comment = `シャープ比 <strong>${sharpe.toFixed(3)}</strong>：リスクに対してリターンが低い状態です。配分を再検討してください。`;
+      if (Math.abs(totalAlloc - 100) > 1) comment += ` <span class="text-red-500">（配分合計が${totalAlloc.toFixed(0)}%です。100%に合わせてください）</span>`;
+      document.getElementById('sharpeComment').innerHTML = comment;
+
+      // スライダー
+      const sliderContainer = document.getElementById('sliders');
+      sliderContainer.innerHTML = assets.map((a, i) =>
+        `<div>
+          <div class="flex justify-between text-xs text-gray-500 mb-0.5">
+            <span>${escHtml(a.name)}</span>
+            <span id="sv${i}">${a.alloc}%</span>
+          </div>
+          <input type="range" min="0" max="100" step="1" value="${a.alloc}"
+            aria-label="${escHtml(a.name)}の配分スライダー"
+            class="slider-alloc w-full accent-indigo-500" data-idx="${i}">
+        </div>`
+      ).join('');
+
+      sliderContainer.querySelectorAll('.slider-alloc').forEach(sl => {
+        sl.addEventListener('input', updateSliders);
+      });
+
+      drawChart(assets, pfReturn, pfRisk, rfRate);
+      document.getElementById('resultArea').classList.remove('hidden');
+      updateSliders();
+    }
+
+    function updateSliders() {
+      const rfRate = parseFloat(document.getElementById('rfRate').value) || 0;
+      const sliders = document.querySelectorAll('.slider-alloc');
+      const slideAssets = assets.map((a, i) => ({
+        ...a,
+        alloc: parseFloat(sliders[i].value) || 0
+      }));
+      sliders.forEach((sl, i) => {
+        const el = document.getElementById(`sv${i}`);
+        if (el) el.textContent = sl.value + '%';
+      });
+      const { pfReturn, pfRisk, sharpe } = calcPortfolio(slideAssets, rfRate);
+      document.getElementById('slideSharpe').textContent = sharpe.toFixed(3);
+      document.getElementById('slideReturn').textContent = pfReturn.toFixed(2);
+      document.getElementById('slideRisk').textContent = pfRisk.toFixed(2);
+    }
+
+    function drawChart(assets, pfReturn, pfRisk, rfRate) {
+      const svg = document.getElementById('chart');
+      const W = 500, H = 360;
+      const PAD = { top: 30, right: 30, bottom: 50, left: 60 };
+      const cW = W - PAD.left - PAD.right;
+      const cH = H - PAD.top - PAD.bottom;
+
+      const risks = [...assets.map(a => a.risk), pfRisk];
+      const rets = [...assets.map(a => a.ret), pfReturn];
+      const minX = 0, maxX = Math.max(...risks) * 1.2;
+      const minY = Math.min(0, ...rets, rfRate) - 1;
+      const maxY = Math.max(...rets) * 1.2;
+
+      const sx = x => PAD.left + ((x - minX) / (maxX - minX)) * cW;
+      const sy = y => PAD.top + cH - ((y - minY) / (maxY - minY)) * cH;
+
+      const COLORS = ['#6366f1','#f59e0b','#10b981','#ef4444','#8b5cf6'];
+
+      let html = '';
+      // グリッド
+      for (let i = 0; i <= 4; i++) {
+        const y = PAD.top + (cH / 4) * i;
+        const val = maxY - (maxY - minY) * i / 4;
+        html += `<line x1="${PAD.left}" y1="${y}" x2="${W-PAD.right}" y2="${y}" stroke="#e5e7eb" stroke-width="1"/>`;
+        html += `<text x="${PAD.left-5}" y="${y+4}" text-anchor="end" font-size="10" fill="#9ca3af">${val.toFixed(1)}%</text>`;
+      }
+      for (let i = 0; i <= 4; i++) {
+        const x = PAD.left + (cW / 4) * i;
+        const val = minX + (maxX - minX) * i / 4;
+        html += `<line x1="${x}" y1="${PAD.top}" x2="${x}" y2="${H-PAD.bottom}" stroke="#e5e7eb" stroke-width="1"/>`;
+        html += `<text x="${x}" y="${H-PAD.bottom+15}" text-anchor="middle" font-size="10" fill="#9ca3af">${val.toFixed(1)}%</text>`;
+      }
+      // 軸ラベル
+      html += `<text x="${W/2}" y="${H-5}" text-anchor="middle" font-size="11" fill="#6b7280">リスク（標準偏差）%</text>`;
+      html += `<text x="12" y="${H/2}" text-anchor="middle" font-size="11" fill="#6b7280" transform="rotate(-90,12,${H/2})">リターン%</text>`;
+      // 資本市場線 (CML)
+      const cmlX2 = maxX;
+      const slope = (pfReturn - rfRate) / (pfRisk || 1);
+      const cmlY2 = rfRate + slope * cmlX2;
+      html += `<line x1="${sx(0)}" y1="${sy(rfRate)}" x2="${sx(cmlX2)}" y2="${sy(cmlY2)}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="5,3"/>`;
+      html += `<text x="${sx(0)+3}" y="${sy(rfRate)-4}" font-size="9" fill="#94a3b8">Rf</text>`;
+
+      // 各資産プロット
+      assets.forEach((a, i) => {
+        const cx = sx(a.risk), cy = sy(a.ret);
+        html += `<circle cx="${cx}" cy="${cy}" r="8" fill="${COLORS[i % COLORS.length]}" opacity="0.85"/>`;
+        html += `<text x="${cx}" y="${cy-11}" text-anchor="middle" font-size="10" fill="${COLORS[i % COLORS.length]}">${escHtml(a.name)}</text>`;
+      });
+
+      // ポートフォリオ
+      const pcx = sx(pfRisk), pcy = sy(pfReturn);
+      html += `<polygon points="${pcx},${pcy-10} ${pcx-9},${pcy+6} ${pcx+9},${pcy+6}" fill="#f97316"/>`;
+      html += `<text x="${pcx}" y="${pcy-13}" text-anchor="middle" font-size="10" font-weight="bold" fill="#f97316">PF</text>`;
+
+      svg.innerHTML = html;
+    }
+
+    document.getElementById('addAssetBtn').addEventListener('click', () => {
+      if (assets.length >= 5) return;
+      assets.push({ name: `資産${assets.length+1}`, ret: 5, risk: 15, alloc: 10 });
+      renderAssets();
+    });
+    document.getElementById('calcBtn').addEventListener('click', calc);
+
+    renderAssets();
+    calc();
+  </script>
+</body>
+</html>
